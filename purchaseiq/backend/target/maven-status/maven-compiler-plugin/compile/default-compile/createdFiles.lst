@@ -1,0 +1,12 @@
+com\purchaseiq\model\ScrapeResult$Builder.class
+com\purchaseiq\model\ScrapeResult.class
+com\purchaseiq\Application.class
+com\purchaseiq\service\ProductService.class
+com\purchaseiq\risk\RiskAnalysisService$CategoryStats.class
+com\purchaseiq\model\Product$Builder.class
+com\purchaseiq\repository\ProductRepository.class
+com\purchaseiq\model\Product.class
+com\purchaseiq\risk\RiskAnalysisService.class
+com\purchaseiq\api\AnalyticsController.class
+com\purchaseiq\model\ProductDTO.class
+com\purchaseiq\scraper\BooksToScrapeScraper.class

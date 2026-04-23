@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PurchaseIQ v2.0 — Live Scraping + Risk Analysis</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<style>
+  :root {
+    --bg:       #0f1117;
+    --surface:  #1a1d27;
+    --card:     #20243a;
+    --border:   #2e3354;
+    --text:     #e2e8f0;
+    --muted:    #8892b0;
+    --accent:   #7c6fff;
+    --green:    #22d3ee;
+    --yellow:   #fbbf24;
+    --orange:   #f97316;
+    --red:      #ef4444;
+    --low:      #22c55e;
+    --medium:   #eab308;
+    --high:     #f97316;
+    --critical: #ef4444;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
+
+  /* ── Header ── */
+  .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; }
+  .header h1 { font-size: 22px; font-weight: 700; color: var(--accent); letter-spacing: -0.5px; }
+  .header .subtitle { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .live-badge { background: #0d2d1a; border: 1px solid var(--low); color: var(--low); padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--low); animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  /* ── Layout ── */
+  .container { max-width: 1400px; margin: 0 auto; padding: 24px 32px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .col-span-2 { grid-column: span 2; }
+
+  /* ── Cards ── */
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .card-title { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+  .card-title svg { opacity: 0.7; }
+
+  /* ── Stat Boxes ── */
+  .stat-val { font-size: 36px; font-weight: 800; line-height: 1; }
+  .stat-label { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .stat-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+  /* ── Risk Badges ── */
+  .badge { display: inline-block; padding: 3px 9px; border-radius: 20px; font-size: 11px; font-weight: 700; }
+  .badge-LOW      { background: #0d2d1a; color: var(--low);      border: 1px solid var(--low); }
+  .badge-MEDIUM   { background: #2d2209; color: var(--medium);   border: 1px solid var(--medium); }
+  .badge-HIGH     { background: #2d1609; color: var(--high);     border: 1px solid var(--high); }
+  .badge-CRITICAL { background: #2d0909; color: var(--critical); border: 1px solid var(--critical); }
+
+  /* ── Scrape Controls ── */
+  .controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 24px; }
+  .btn { padding: 10px 20px; border-radius: 8px; border: none; cursor: pointer; font-weight: 600; font-size: 13px; transition: all 0.2s; display: flex; align-items: center; gap: 8px; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { opacity: 0.85; transform: translateY(-1px); }
+  .btn-secondary { background: var(--surface); border: 1px solid var(--border); color: var(--text); }
+  .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+  .spinner { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Status Bar ── */
+  .status-bar { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; font-size: 12px; color: var(--muted); display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  .status-item { display: flex; gap: 5px; }
+  .status-key { color: var(--muted); }
+  .status-val { color: var(--text); font-weight: 600; }
+
+  /* ── Tables ── */
+  .table-wrap { overflow-x: auto; max-height: 380px; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { background: var(--surface); color: var(--muted); text-align: left; padding: 8px 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; position: sticky; top: 0; z-index: 1; }
+  td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tr:hover td { background: rgba(124,111,255,0.05); }
+  .risk-score-bar { height: 6px; border-radius: 3px; background: var(--border); position: relative; min-width: 80px; }
+  .risk-score-fill { height: 100%; border-radius: 3px; transition: width 0.5s; }
+
+  /* ── Tabs ── */
+  .tabs { display: flex; gap: 4px; background: var(--surface); border-radius: 10px; padding: 4px; margin-bottom: 24px; }
+  .tab { padding: 8px 18px; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; color: var(--muted); transition: all 0.2s; border: none; background: none; }
+  .tab.active { background: var(--card); color: var(--text); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* ── Chart containers ── */
+  .chart-wrap { width: 100%; overflow: hidden; }
+  svg text { fill: var(--muted); font-family: inherit; }
+
+  /* ── Progress bars for risk meter ── */
+  .risk-meter { display: flex; flex-direction: column; gap: 10px; }
+  .risk-row { display: flex; align-items: center; gap: 12px; }
+  .risk-row-label { font-size: 12px; color: var(--muted); min-width: 80px; }
+  .risk-bar-bg { flex: 1; height: 10px; background: var(--border); border-radius: 5px; overflow: hidden; }
+  .risk-bar-fill { height: 100%; border-radius: 5px; transition: width 0.8s ease; }
+  .risk-row-count { font-size: 12px; color: var(--text); font-weight: 600; min-width: 40px; text-align: right; }
+
+  /* ── Loading overlay ── */
+  #loading-overlay { position: fixed; inset: 0; background: rgba(15,17,23,0.9); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 1000; gap: 16px; display: none; }
+  .loading-spinner { width: 48px; height: 48px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+  .loading-text { color: var(--text); font-size: 15px; font-weight: 600; }
+  .loading-sub { color: var(--muted); font-size: 12px; }
+
+  /* ── Empty state ── */
+  .empty-state { text-align: center; padding: 60px 20px; color: var(--muted); }
+  .empty-state h3 { font-size: 18px; color: var(--text); margin-bottom: 8px; }
+  .empty-state p { font-size: 13px; line-height: 1.6; }
+
+  /* ── Alerts ── */
+  .alert { padding: 12px 16px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; display: none; }
+  .alert-success { background: #0d2d1a; border: 1px solid var(--low); color: var(--low); }
+  .alert-error { background: #2d0909; border: 1px solid var(--critical); color: var(--critical); }
+
+  @media (max-width: 900px) {
+    .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+    .col-span-2 { grid-column: span 1; }
+    .container { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Loading Overlay -->
+<div id="loading-overlay">
+  <div class="loading-spinner"></div>
+  <div class="loading-text" id="loading-text">Scraping books.toscrape.com…</div>
+  <div class="loading-sub" id="loading-sub">Fetching live data from 15 genre categories</div>
+</div>
+
+<!-- Header -->
+<div class="header">
+  <div>
+    <h1>📚 PurchaseIQ v2.0</h1>
+    <div class="subtitle">Live Web Scraping + Risk Analysis · books.toscrape.com</div>
+  </div>
+  <div class="live-badge"><div class="dot"></div> Live Data</div>
+</div>
+
+<div class="container">
+
+  <!-- Alert -->
+  <div id="alert" class="alert"></div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <button class="btn btn-primary" id="btn-scrape" onclick="runScrape()">
+      <span>🔄</span> Scrape All Categories
+    </button>
+    <button class="btn btn-secondary" onclick="loadDashboard()">
+      <span>📊</span> Refresh Dashboard
+    </button>
+    <button class="btn btn-secondary" onclick="runRiskAnalysis()">
+      <span>⚠️</span> Re-run Risk Analysis
+    </button>
+    <select id="cat-select" onchange="loadCategoryChart()" style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:9px 14px;border-radius:8px;font-size:13px;cursor:pointer;">
+      <option value="">Select Category…</option>
+    </select>
+  </div>
+
+  <!-- Status bar -->
+  <div class="status-bar" id="status-bar" style="margin-bottom:20px;">
+    <div class="status-item"><span class="status-key">Status:</span><span class="status-val" id="s-status">Ready — click Scrape to fetch live data</span></div>
+    <div class="status-item"><span class="status-key">Products:</span><span class="status-val" id="s-total">—</span></div>
+    <div class="status-item"><span class="status-key">Categories:</span><span class="status-val" id="s-cats">—</span></div>
+    <div class="status-item"><span class="status-key">Avg Risk:</span><span class="status-val" id="s-risk">—</span></div>
+    <div class="status-item"><span class="status-key">Source:</span><span class="status-val">books.toscrape.com</span></div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('overview')">Overview</button>
+    <button class="tab" onclick="switchTab('risk')">Risk Analysis</button>
+    <button class="tab" onclick="switchTab('products')">Products Table</button>
+    <button class="tab" onclick="switchTab('category')">Category Deep Dive</button>
+  </div>
+
+  <!-- TAB: Overview -->
+  <div class="tab-content active" id="tab-overview">
+
+    <!-- Stats row -->
+    <div class="grid-4" style="margin-bottom:20px;" id="stats-row">
+      <div class="card">
+        <div class="card-title">Total Books</div>
+        <div class="stat-val" id="stat-total" style="color:var(--accent)">—</div>
+        <div class="stat-sub">Scraped live</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Categories</div>
+        <div class="stat-val" id="stat-cats" style="color:var(--green)">—</div>
+        <div class="stat-sub">Genres scraped</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Avg Risk Score</div>
+        <div class="stat-val" id="stat-avg-risk" style="color:var(--yellow)">—</div>
+        <div class="stat-sub">0–100 composite</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Critical Risk</div>
+        <div class="stat-val" id="stat-critical" style="color:var(--critical)">—</div>
+        <div class="stat-sub">Books needing action</div>
+      </div>
+    </div>
+
+    <!-- Charts row 1 -->
+    <div class="grid-2" style="margin-bottom:20px;">
+      <div class="card">
+        <div class="card-title">📊 Books per Category</div>
+        <div class="chart-wrap" id="chart-category-dist"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">⭐ Avg Rating per Category</div>
+        <div class="chart-wrap" id="chart-avg-rating"></div>
+      </div>
+    </div>
+
+    <!-- Charts row 2 -->
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">💰 Price Distribution by Category</div>
+        <div class="chart-wrap" id="chart-price-dist"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">🛒 Stock Availability</div>
+        <div class="chart-wrap" id="chart-stock"></div>
+        <div id="stock-legend" style="display:flex;gap:16px;justify-content:center;margin-top:8px;font-size:12px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB: Risk Analysis -->
+  <div class="tab-content" id="tab-risk">
+
+    <!-- Risk stats -->
+    <div class="grid-4" style="margin-bottom:20px;">
+      <div class="card" style="border-color:var(--low)">
+        <div class="card-title" style="color:var(--low)">✅ LOW Risk</div>
+        <div class="stat-val" id="r-low" style="color:var(--low)">—</div>
+        <div class="stat-sub">Safe to purchase</div>
+      </div>
+      <div class="card" style="border-color:var(--medium)">
+        <div class="card-title" style="color:var(--medium)">⚠️ MEDIUM Risk</div>
+        <div class="stat-val" id="r-medium" style="color:var(--medium)">—</div>
+        <div class="stat-sub">Review before buying</div>
+      </div>
+      <div class="card" style="border-color:var(--high)">
+        <div class="card-title" style="color:var(--high)">🔶 HIGH Risk</div>
+        <div class="stat-val" id="r-high" style="color:var(--high)">—</div>
+        <div class="stat-sub">Significant concerns</div>
+      </div>
+      <div class="card" style="border-color:var(--critical)">
+        <div class="card-title" style="color:var(--critical)">🔴 CRITICAL</div>
+        <div class="stat-val" id="r-critical" style="color:var(--critical)">—</div>
+        <div class="stat-sub">Avoid / act immediately</div>
+      </div>
+    </div>
+
+    <div class="grid-2" style="margin-bottom:20px;">
+      <!-- Risk donut chart -->
+      <div class="card">
+        <div class="card-title">🍩 Risk Level Distribution</div>
+        <div class="chart-wrap" id="chart-risk-donut"></div>
+        <div id="risk-donut-legend" style="display:flex;gap:16px;justify-content:center;margin-top:8px;font-size:12px;flex-wrap:wrap;"></div>
+      </div>
+
+      <!-- Risk by category bar -->
+      <div class="card">
+        <div class="card-title">📊 Average Risk Score by Category</div>
+        <div class="chart-wrap" id="chart-risk-by-cat"></div>
+      </div>
+    </div>
+
+    <!-- Price vs Risk Scatter -->
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-title">💹 Price vs Risk Score (Scatter)</div>
+      <div class="chart-wrap" id="chart-price-risk-scatter"></div>
+    </div>
+
+    <!-- Top Risk products table -->
+    <div class="card">
+      <div class="card-title">🚨 Top High-Risk Products</div>
+      <div class="table-wrap">
+        <table id="risk-table">
+          <thead>
+            <tr>
+              <th>Book Title</th>
+              <th>Category</th>
+              <th>Price</th>
+              <th>Rating</th>
+              <th>Risk Score</th>
+              <th>Risk Level</th>
+              <th>Flags</th>
+            </tr>
+          </thead>
+          <tbody id="risk-table-body">
+            <tr><td colspan="7" class="empty-state" style="padding:40px">Run scrape to load data</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB: Products Table -->
+  <div class="tab-content" id="tab-products">
+    <div class="card">
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap;">
+        <input id="search-input" type="text" placeholder="Search book title…"
+          oninput="filterProducts()"
+          style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 14px;border-radius:8px;font-size:13px;flex:1;min-width:200px;">
+        <select id="filter-risk" onchange="filterProducts()"
+          style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 14px;border-radius:8px;font-size:13px;">
+          <option value="">All Risk Levels</option>
+          <option value="LOW">LOW</option>
+          <option value="MEDIUM">MEDIUM</option>
+          <option value="HIGH">HIGH</option>
+          <option value="CRITICAL">CRITICAL</option>
+        </select>
+        <select id="filter-cat" onchange="filterProducts()"
+          style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 14px;border-radius:8px;font-size:13px;">
+          <option value="">All Categories</option>
+        </select>
+        <span id="product-count" style="color:var(--muted);font-size:12px;"></span>
+      </div>
+      <div class="table-wrap">
+        <table id="products-table">
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Category</th>
+              <th>Price (£)</th>
+              <th>Rating</th>
+              <th>Stock</th>
+              <th>Risk Score</th>
+              <th>Risk Level</th>
+              <th>Recommendation</th>
+            </tr>
+          </thead>
+          <tbody id="products-body">
+            <tr><td colspan="8" style="text-align:center;padding:40px;color:var(--muted)">Run scrape to load data</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB: Category Deep Dive -->
+  <div class="tab-content" id="tab-category">
+    <div class="grid-2" style="margin-bottom:20px;">
+      <div class="card">
+        <div class="card-title">📖 Top Rated Books in Category</div>
+        <div class="chart-wrap" id="chart-cat-top"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">💰 Price Range Distribution</div>
+        <div class="chart-wrap" id="chart-cat-price"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">📋 Category Product List with Risk</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Title</th><th>Price</th><th>Rating</th><th>In Stock</th><th>Risk</th><th>Top Risk Flags</th></tr></thead>
+          <tbody id="cat-table-body">
+            <tr><td colspan="6" style="text-align:center;padding:40px;color:var(--muted)">Select a category and click Refresh</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<script>
+const API = 'http://localhost:8080/api/v1';
+let allProductsCache = [];
+
+// ─── UTILITIES ────────────────────────────────────────────────────
+
+function showAlert(msg, type = 'success') {
+  const el = document.getElementById('alert');
+  el.className = `alert alert-${type}`;
+  el.textContent = msg;
+  el.style.display = 'block';
+  setTimeout(() => el.style.display = 'none', 5000);
+}
+
+function showLoading(text = 'Loading…', sub = '') {
+  document.getElementById('loading-text').textContent = text;
+  document.getElementById('loading-sub').textContent = sub;
+  document.getElementById('loading-overlay').style.display = 'flex';
+}
+
+function hideLoading() {
+  document.getElementById('loading-overlay').style.display = 'none';
+}
+
+function riskColor(level) {
+  return { LOW: '#22c55e', MEDIUM: '#eab308', HIGH: '#f97316', CRITICAL: '#ef4444' }[level] || '#8892b0';
+}
+
+function stars(n) {
+  return n ? '★'.repeat(Math.round(n)) + '☆'.repeat(5 - Math.round(n)) : '—';
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  event.target.classList.add('active');
+}
+
+// ─── SCRAPING ─────────────────────────────────────────────────────
+
+async function runScrape() {
+  const btn = document.getElementById('btn-scrape');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Scraping…';
+  showLoading('Scraping books.toscrape.com…', 'Fetching 15 genre categories with ethical delays. This may take 60–120 seconds.');
+  document.getElementById('s-status').textContent = 'Scraping in progress…';
+
+  try {
+    const res = await fetch(`${API}/scrape`, { method: 'POST' });
+    const data = await res.json();
+
+    showAlert(`✅ Scraped ${data.totalScraped} books, saved ${data.savedToDb} new · ${(data.durationMs/1000).toFixed(1)}s`);
+    document.getElementById('s-status').textContent = `Last scrape: ${data.totalScraped} books in ${(data.durationMs/1000).toFixed(1)}s`;
+
+    await loadDashboard();
+  } catch (e) {
+    showAlert('❌ Scrape failed: ' + e.message + ' — Is the Spring Boot server running on :8080?', 'error');
+    document.getElementById('s-status').textContent = 'Scrape failed — check server';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<span>🔄</span> Scrape All Categories';
+    hideLoading();
+  }
+}
+
+async function runRiskAnalysis() {
+  showLoading('Running risk analysis…', 'Computing price, rating, stock and category risk scores');
+  try {
+    await fetch(`${API}/risk/analyze`, { method: 'POST' });
+    showAlert('✅ Risk analysis complete');
+    await loadDashboard();
+  } catch (e) {
+    showAlert('❌ ' + e.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// ─── DASHBOARD LOAD ───────────────────────────────────────────────
+
+async function loadDashboard() {
+  try {
+    // Load all data in parallel
+    const [statsRes, riskRes, distRes, catsRes, allProdRes, riskByCatRes, priceRiskRes] = await Promise.all([
+      fetch(`${API}/stats`).then(r=>r.json()).catch(()=>{}),
+      fetch(`${API}/risk/summary`).then(r=>r.json()).catch(()=>{}),
+      fetch(`${API}/analytics/category-distribution`).then(r=>r.json()).catch(()=>{}),
+      fetch(`${API}/categories`).then(r=>r.json()).catch(()=>[]),
+      fetch(`${API}/products`).then(r=>r.json()).catch(()=>[]),
+      fetch(`${API}/risk/by-category`).then(r=>r.json()).catch(()=>[]),
+      fetch(`${API}/risk/price-vs-risk`).then(r=>r.json()).catch(()=>[])
+    ]);
+
+    allProductsCache = allProdRes || [];
+
+    // Update status
+    if (statsRes) {
+      document.getElementById('s-total').textContent = statsRes.totalProducts || 0;
+      document.getElementById('s-cats').textContent = statsRes.categories || 0;
+    }
+
+    // Update stat boxes
+    if (riskRes) {
+      document.getElementById('stat-total').textContent = riskRes.totalProducts || 0;
+      document.getElementById('stat-cats').textContent = (catsRes||[]).length;
+      document.getElementById('stat-avg-risk').textContent = (riskRes.avgRiskScore || 0).toFixed(1);
+      document.getElementById('stat-critical').textContent = riskRes.criticalRisk || 0;
+      document.getElementById('s-risk').textContent = `${(riskRes.avgRiskScore||0).toFixed(1)} (${riskRes.overallRiskLevel||'—'})`;
+
+      // Risk tab stats
+      document.getElementById('r-low').textContent    = riskRes.lowRisk || 0;
+      document.getElementById('r-medium').textContent = riskRes.mediumRisk || 0;
+      document.getElementById('r-high').textContent   = riskRes.highRisk || 0;
+      document.getElementById('r-critical').textContent = riskRes.criticalRisk || 0;
+    }
+
+    // Populate category selectors
+    if (catsRes && catsRes.length) {
+      populateCategorySelects(catsRes);
+    }
+
+    // Draw charts
+    if (distRes) {
+      drawCategoryBarChart(distRes, '#chart-category-dist');
+    }
+
+    if (allProductsCache.length) {
+      drawAvgRatingChart(allProductsCache);
+      drawPriceDistChart(allProductsCache);
+      drawStockDonut(allProductsCache);
+      renderProductsTable(allProductsCache);
+    }
+
+    if (riskRes) {
+      await loadRiskDistribution(riskRes);
+    }
+    if (riskByCatRes && riskByCatRes.length) {
+      drawRiskByCatChart(riskByCatRes);
+    }
+    if (priceRiskRes && priceRiskRes.length) {
+      drawPriceVsRiskScatter(priceRiskRes);
+    }
+
+    await loadTopRiskTable();
+
+  } catch (e) {
+    console.error('Dashboard load error:', e);
+  }
+}
+
+function populateCategorySelects(cats) {
+  const selects = ['cat-select', 'filter-cat'];
+  selects.forEach(id => {
+    const sel = document.getElementById(id);
+    const firstOpt = sel.options[0].outerHTML;
+    sel.innerHTML = firstOpt;
+    cats.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c; opt.textContent = c;
+      sel.appendChild(opt);
+    });
+  });
+}
+
+// ─── CHARTS ───────────────────────────────────────────────────────
+
+function clearChart(selector) {
+  d3.select(selector).selectAll('*').remove();
+}
+
+function drawCategoryBarChart(distData, selector) {
+  clearChart(selector);
+  const entries = Object.entries(distData).sort((a,b)=>b[1]-a[1]);
+  const W = 460, H = 280, margin = {top:10,right:20,bottom:90,left:50};
+  const w = W - margin.left - margin.right, h = H - margin.top - margin.bottom;
+
+  const svg = d3.select(selector).append('svg').attr('viewBox', `0 0 ${W} ${H}`).attr('width','100%');
+  const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+  const x = d3.scaleBand().domain(entries.map(d=>d[0])).range([0,w]).padding(0.3);
+  const y = d3.scaleLinear().domain([0, d3.max(entries, d=>d[1])]).nice().range([h,0]);
+
+  const color = d3.scaleOrdinal(d3.schemeTableau10);
+
+  g.append('g').attr('transform',`translate(0,${h})`).call(d3.axisBottom(x))
+   .selectAll('text').attr('transform','rotate(-40)').style('text-anchor','end').style('font-size','10px');
+  g.append('g').call(d3.axisLeft(y).ticks(5));
+
+  g.selectAll('.bar').data(entries).join('rect')
+    .attr('class','bar')
+    .attr('x', d=>x(d[0])).attr('y', d=>y(d[1]))
+    .attr('width', x.bandwidth()).attr('height', d=>h - y(d[1]))
+    .attr('fill', (_,i)=>color(i)).attr('rx', 4);
+}
+
+function drawAvgRatingChart(products) {
+  clearChart('#chart-avg-rating');
+  const bycat = d3.rollup(products.filter(p=>p.rating), v=>d3.mean(v, d=>d.rating), d=>d.category);
+  const entries = [...bycat.entries()].sort((a,b)=>b[1]-a[1]);
+
+  const W = 460, H = 280, margin = {top:10,right:20,bottom:90,left:50};
+  const w = W - margin.left - margin.right, h = H - margin.top - margin.bottom;
+  const svg = d3.select('#chart-avg-rating').append('svg').attr('viewBox',`0 0 ${W} ${H}`).attr('width','100%');
+  const g = svg.append('g').attr('transform',`translate(${margin.left},${margin.top})`);
+
+  const x = d3.scaleBand().domain(entries.map(d=>d[0])).range([0,w]).padding(0.3);
+  const y = d3.scaleLinear().domain([0,5]).range([h,0]);
+
+  g.append('g').attr('transform',`translate(0,${h})`).call(d3.axisBottom(x))
+   .selectAll('text').attr('transform','rotate(-40)').style('text-anchor','end').style('font-size','10px');
+  g.append('g').call(d3.axisLeft(y).ticks(5));
+
+  // Gradient fill based on rating
+  g.selectAll('.bar').data(entries).join('rect').attr('class','bar')
+    .attr('x',d=>x(d[0])).attr('y',d=>y(d[1]))
+    .attr('width',x.bandwidth()).attr('height',d=>h-y(d[1]))
+    .attr('fill', d => d3.interpolateRdYlGn((d[1]-1)/4))
+    .attr('rx',4);
+
+  // Labels
+  g.selectAll('.lbl').data(entries).join('text').attr('class','lbl')
+    .attr('x',d=>x(d[0])+x.bandwidth()/2).attr('y',d=>y(d[1])-4)
+    .attr('text-anchor','middle').style('font-size','9px').style('fill','var(--text)')
+    .text(d=>d[1].toFixed(1));
+}
+
+function drawPriceDistChart(products) {
+  clearChart('#chart-price-dist');
+  const bycat = d3.rollup(products.filter(p=>p.price), v=>d3.mean(v,d=>d.price), d=>d.category);
+  const entries = [...bycat.entries()].sort((a,b)=>b[1]-a[1]);
+
+  const W = 460, H = 280, margin = {top:10,right:20,bottom:90,left:55};
+  const w = W - margin.left - margin.right, h = H - margin.top - margin.bottom;
+  const svg = d3.select('#chart-price-dist').append('svg').attr('viewBox',`0 0 ${W} ${H}`).attr('width','100%');
+  const g = svg.append('g').attr('transform',`translate(${margin.left},${margin.top})`);
+
+  const x = d3.scaleBand().domain(entries.map(d=>d[0])).range([0,w]).padding(0.3);
+  const y = d3.scaleLinear().domain([0, d3.max(entries,d=>d[1])]).nice().range([h,0]);
+
+  g.append('g').attr('transform',`translate(0,${h})`).call(d3.axisBottom(x))
+   .selectAll('text').attr('transform','rotate(-40)').style('text-anchor','end').style('font-size','10px');
+  g.append('g').call(d3.axisLeft(y).tickFormat(d=>`£${d.toFixed(0)}`));
+
+  g.selectAll('.bar').data(entries).join('rect').attr('class','bar')
+    .attr('x',d=>x(d[0])).attr('y',d=>y(d[1]))
+    .attr('width',x.bandwidth()).attr('height',d=>h-y(d[1]))
+    .attr('fill','#7c6fff').attr('rx',4);
+}
+
+function drawStockDonut(products) {
+  clearChart('#chart-stock');
+  const inStock = products.filter(p=>p.inStock).length;
+  const outStock = products.filter(p=>!p.inStock).length;
+  const data = [{label:'In Stock', val:inStock, color:'#22c55e'},{label:'Out of Stock', val:outStock, color:'#ef4444'}];
+
+  const W = 300, H = 220, R = 80;
+  const svg = d3.select('#chart-stock').append('svg').attr('viewBox',`0 0 ${W} ${H}`).attr('width','100%');
+  const g = svg.append('g').attr('transform',`translate(${W/2},${H/2})`);
+  const pie = d3.pie().value(d=>d.val).sort(null);
+  const arc = d3.arc().innerRadius(R*0.55).outerRadius(R);
+
+  g.selectAll('path').data(pie(data)).join('path')
+   .attr('d',arc).attr('fill',d=>d.data.color).attr('stroke','var(--card)').attr('stroke-width',2);
+
+  const total = inStock + outStock;
+  g.append('text').attr('text-anchor','middle').attr('dy','0.2em')
+   .style('font-size','22px').style('font-weight','700').style('fill','var(--text)')
+   .text(total > 0 ? Math.round(inStock/total*100)+'%' : '—');
+  g.append('text').attr('text-anchor','middle').attr('dy','1.6em')
+   .style('font-size','11px').style('fill','var(--muted)').text('In Stock');
+
+  const legend = document.getElementById('stock-legend');
+  legend.innerHTML = data.map(d=>`<span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:50%;background:${d.color};display:inline-block"></span>${d.label}: ${d.val}</span>`).join('');
+}
+
+async function loadRiskDistribution(riskData) {
+  clearChart('#chart-risk-donut');
+  const levels = [
+    {label:'LOW',      val: riskData.lowRisk||0,      color:'#22c55e'},
+    {label:'MEDIUM',   val: riskData.mediumRisk||0,   color:'#eab308'},
+    {label:'HIGH',     val: riskData.highRisk||0,     color:'#f97316'},
+    {label:'CRITICAL', val: riskData.criticalRisk||0, color:'#ef4444'}
+  ].filter(d=>d.val>0);
+
+  if (!levels.length) { d3.select('#chart-risk-donut').append('div').style('padding','40px').style('text-align','center').style('color','var(--muted)').text('No risk data yet'); return; }
+
+  const W = 320, H = 240, R = 90;
+  const svg = d3.select('#chart-risk-donut').append('svg').attr('viewBox',`0 0 ${W} ${H}`).attr('width','100%');
+  const g = svg.append('g').attr('transform',`translate(${W/2},${H/2})`);
+  const pie = d3.pie().value(d=>d.val).sort(null);
+  const arc = d3.arc().innerRadius(R*0.55).outerRadius(R);
+
+  g.selectAll('path').data(pie(levels)).join('path')
+   .attr('d',arc).attr('fill',d=>d.data.color).attr('stroke','var(--card)').attr('stroke-width',3);
+
+  const total = levels.reduce((s,d)=>s+d.val,0);
+  g.append('text').attr('text-anchor','middle').attr('dy','0.2em')
+   .style('font-size','22px').style('font-weight','700').style('fill','var(--text)').text(total);
+  g.append('text').attr('text-anchor','middle').attr('dy','1.6em')
+   .style('font-size','11px').style('fill','var(--muted)').text('Total');
+
+  const legend = document.getElementById('risk-donut-legend');
+  legend.innerHTML = levels.map(d=>`<span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:50%;background:${d.color};display:inline-block"></span>${d.label}: ${d.val}</span>`).join('');
+}
+
+function drawRiskByCatChart(data) {
+  clearChart('#chart-risk-by-cat');
+  const sorted = [...data].sort((a,b)=>(b.avgRiskScore||0)-(a.avgRiskScore||0));
+
+  const W = 460, H = 280, margin = {top:10,right:20,bottom:90,left:50};
+  const w = W - margin.left - margin.right, h = H - margin.top - margin.bottom;
+  const svg = d3.select('#chart-risk-by-cat').append('svg').attr('viewBox',`0 0 ${W} ${H}`).attr('width','100%');
+  const g = svg.append('g').attr('transform',`translate(${margin.left},${margin.top})`);
+
+  const x = d3.scaleBand().domain(sorted.map(d=>d.category)).range([0,w]).padding(0.3);
+  const y = d3.scaleLinear().domain([0,100]).range([h,0]);
+
+  g.append('g').attr('transform',`translate(0,${h})`).call(d3.axisBottom(x))
+   .selectAll('text').attr('transform','rotate(-40)').style('text-anchor','end').style('font-size','10px');
+  g.append('g').call(d3.axisLeft(y));
+
+  // Color by risk level
+  g.selectAll('.bar').data(sorted).join('rect').attr('class','bar')
+    .attr('x',d=>x(d.category)).attr('y',d=>y(d.avgRiskScore||0))
+    .attr('width',x.bandwidth()).attr('height',d=>h-y(d.avgRiskScore||0))
+    .attr('rx',4)
+    .attr('fill',d => {
+      const s = d.avgRiskScore||0;
+      if (s<=25) return '#22c55e';
+      if (s<=50) return '#eab308';
+      if (s<=75) return '#f97316';
+      return '#ef4444';
+    });
+}
+
+function drawPriceVsRiskScatter(data) {
+  clearChart('#chart-price-risk-scatter');
+  const valid = data.filter(d=>d.price!=null && d.riskScore!=null);
+  if (!valid.length) return;
+
+  const W = 800, H = 340, margin = {top:20,right:120,bottom:50,left:60};
+  const w = W-margin.left-margin.right, h = H-margin.top-margin.bottom;
+
+  const svg = d3.select('#chart-price-risk-scatter').append('svg').attr('viewBox',`0 0 ${W} ${H}`).attr('width','100%');
+  const g = svg.append('g').attr('transform',`translate(${margin.left},${margin.top})`);
+
+  const x = d3.scaleLinear().domain([0, d3.max(valid,d=>d.price)*1.05]).range([0,w]);
+  const y = d3.scaleLinear().domain([0,100]).range([h,0]);
+
+  g.append('g').attr('transform',`translate(0,${h})`).call(d3.axisBottom(x).tickFormat(d=>`£${d}`));
+  g.append('g').call(d3.axisLeft(y));
+
+  g.append('text').attr('x',w/2).attr('y',h+40).attr('text-anchor','middle').style('font-size','11px').text('Price (£)');
+  g.append('text').attr('transform','rotate(-90)').attr('x',-h/2).attr('y',-45).attr('text-anchor','middle').style('font-size','11px').text('Risk Score');
+
+  // Reference lines
+  [25,50,75].forEach(y0=>{
+    g.append('line').attr('x1',0).attr('x2',w).attr('y1',y(y0)).attr('y2',y(y0))
+     .attr('stroke','var(--border)').attr('stroke-dasharray','4,4').attr('stroke-width',1);
+    g.append('text').attr('x',w+4).attr('y',y(y0)+4).style('font-size','9px').style('fill','var(--muted)').text(y0);
+  });
+
+  const tooltip = d3.select('body').append('div')
+    .style('position','fixed').style('background','var(--card)').style('border','1px solid var(--border)')
+    .style('padding','8px 12px').style('border-radius','8px').style('font-size','12px')
+    .style('pointer-events','none').style('opacity',0).style('z-index',999).style('max-width','260px');
+
+  g.selectAll('circle').data(valid).join('circle')
+    .attr('cx',d=>x(d.price)).attr('cy',d=>y(d.riskScore))
+    .attr('r',5).attr('opacity',0.75)
+    .attr('fill', d=>riskColor(d.riskLevel))
+    .attr('stroke','rgba(0,0,0,0.3)').attr('stroke-width',1)
+    .on('mouseover', (event,d)=>{
+      tooltip.style('opacity',1).html(`<b>${d.name}</b><br>Category: ${d.category}<br>Price: £${d.price?.toFixed(2)}<br>Risk: ${d.riskScore?.toFixed(1)} (${d.riskLevel})`);
+    })
+    .on('mousemove', event=>tooltip.style('left',(event.clientX+10)+'px').style('top',(event.clientY-20)+'px'))
+    .on('mouseout',()=>tooltip.style('opacity',0));
+
+  // Legend
+  const levels = [{label:'LOW',color:'#22c55e'},{label:'MEDIUM',color:'#eab308'},{label:'HIGH',color:'#f97316'},{label:'CRITICAL',color:'#ef4444'}];
+  const legend = svg.append('g').attr('transform',`translate(${W-110},${margin.top})`);
+  levels.forEach((l,i)=>{
+    legend.append('circle').attr('cx',8).attr('cy',i*20).attr('r',6).attr('fill',l.color);
+    legend.append('text').attr('x',18).attr('y',i*20+4).style('font-size','11px').text(l.label);
+  });
+}
+
+async function loadTopRiskTable() {
+  try {
+    const data = await fetch(`${API}/risk/top?limit=30`).then(r=>r.json());
+    const tbody = document.getElementById('risk-table-body');
+    if (!data || !data.length) { tbody.innerHTML='<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--muted)">No data — run scrape first</td></tr>'; return; }
+
+    tbody.innerHTML = data.map(p=>`
+      <tr>
+        <td title="${p.productName}" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.productName||'—'}</td>
+        <td>${p.category||'—'}</td>
+        <td>£${(p.price||0).toFixed(2)}</td>
+        <td>${stars(p.rating)} ${p.rating||0}</td>
+        <td>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div class="risk-score-bar"><div class="risk-score-fill" style="width:${p.riskScore||0}%;background:${riskColor(p.riskLevel)}"></div></div>
+            <span style="font-weight:700;color:${riskColor(p.riskLevel)}">${(p.riskScore||0).toFixed(0)}</span>
+          </div>
+        </td>
+        <td><span class="badge badge-${p.riskLevel||'LOW'}">${p.riskLevel||'—'}</span></td>
+        <td style="max-width:200px;font-size:11px;color:var(--muted)">${(p.riskFlags||'').split(';').slice(0,2).join(' | ')}</td>
+      </tr>
+    `).join('');
+  } catch(e) { console.warn('Risk table load failed:', e); }
+}
+
+// ─── PRODUCTS TABLE ───────────────────────────────────────────────
+
+function renderProductsTable(products) {
+  const tbody = document.getElementById('products-body');
+  if (!products.length) { tbody.innerHTML='<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--muted)">No data</td></tr>'; return; }
+
+  tbody.innerHTML = products.map(p=>`
+    <tr>
+      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${p.productName}">${p.productName||'—'}</td>
+      <td>${p.category||'—'}</td>
+      <td>£${(p.price||0).toFixed(2)}</td>
+      <td>${stars(p.rating)} ${p.rating||0}</td>
+      <td style="color:${p.inStock?'var(--low)':'var(--critical)'}">${p.inStock?'✅':'❌'}</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:6px">
+          <div class="risk-score-bar" style="min-width:60px"><div class="risk-score-fill" style="width:${p.riskScore||0}%;background:${riskColor(p.riskLevel)}"></div></div>
+          <span style="font-size:11px;color:${riskColor(p.riskLevel)};font-weight:700">${(p.riskScore||0).toFixed(0)}</span>
+        </div>
+      </td>
+      <td><span class="badge badge-${p.riskLevel||'LOW'}">${p.riskLevel||'—'}</span></td>
+      <td style="max-width:220px;font-size:11px;color:var(--muted)">${(p.recommendation||'').substring(0,100)}${(p.recommendation||'').length>100?'…':''}</td>
+    </tr>
+  `).join('');
+  document.getElementById('product-count').textContent = `Showing ${products.length} products`;
+}
+
+function filterProducts() {
+  const search = document.getElementById('search-input').value.toLowerCase();
+  const riskFilter = document.getElementById('filter-risk').value;
+  const catFilter = document.getElementById('filter-cat').value;
+
+  const filtered = allProductsCache.filter(p => {
+    const matchSearch = !search || (p.productName||'').toLowerCase().includes(search);
+    const matchRisk = !riskFilter || p.riskLevel === riskFilter;
+    const matchCat = !catFilter || p.category === catFilter;
+    return matchSearch && matchRisk && matchCat;
+  });
+
+  renderProductsTable(filtered);
+}
+
+// ─── CATEGORY DEEP DIVE ───────────────────────────────────────────
+
+async function loadCategoryChart() {
+  const genre = document.getElementById('cat-select').value;
+  if (!genre) return;
+
+  try {
+    const products = await fetch(`${API}/products/category?name=${encodeURIComponent(genre)}`).then(r=>r.json());
+    if (!products.length) return;
+
+    // Top rated bar chart
+    clearChart('#chart-cat-top');
+    const top10 = [...products].sort((a,b)=>(b.rating||0)-(a.rating||0)).slice(0,10);
+    const W=460,H=280,margin={top:10,right:20,bottom:120,left:50};
+    const w=W-margin.left-margin.right, h=H-margin.top-margin.bottom;
+    const svg=d3.select('#chart-cat-top').append('svg').attr('viewBox',`0 0 ${W} ${H}`).attr('width','100%');
+    const g=svg.append('g').attr('transform',`translate(${margin.left},${margin.top})`);
+    const x=d3.scaleBand().domain(top10.map((_,i)=>`#${i+1}`)).range([0,w]).padding(0.3);
+    const y=d3.scaleLinear().domain([0,5]).range([h,0]);
+    g.append('g').attr('transform',`translate(0,${h})`).call(d3.axisBottom(x));
+    g.append('g').call(d3.axisLeft(y));
+    g.selectAll('.bar').data(top10).join('rect').attr('class','bar')
+     .attr('x',(_,i)=>x(`#${i+1}`)).attr('y',d=>y(d.rating||0))
+     .attr('width',x.bandwidth()).attr('height',d=>h-y(d.rating||0))
+     .attr('fill',d=>riskColor(d.riskLevel)).attr('rx',4);
+    g.selectAll('.lbl').data(top10).join('text').attr('class','lbl')
+     .attr('x',(_,i)=>x(`#${i+1}`)+x.bandwidth()/2).attr('y',h+10)
+     .attr('transform',`rotate(-35,${0},${h+10})`).style('text-anchor','end').style('font-size','9px')
+     .text(d=>(d.productName||'').substring(0,20));
+
+    // Price histogram
+    clearChart('#chart-cat-price');
+    const prices = products.map(p=>p.price).filter(Boolean);
+    const W2=460,H2=280,m={top:10,right:20,bottom:50,left:55};
+    const w2=W2-m.left-m.right,h2=H2-m.top-m.bottom;
+    const svg2=d3.select('#chart-cat-price').append('svg').attr('viewBox',`0 0 ${W2} ${H2}`).attr('width','100%');
+    const g2=svg2.append('g').attr('transform',`translate(${m.left},${m.top})`);
+    const xBins=d3.scaleLinear().domain(d3.extent(prices)).range([0,w2]);
+    const bins=d3.bin().domain(xBins.domain()).thresholds(8)(prices);
+    const yBins=d3.scaleLinear().domain([0,d3.max(bins,d=>d.length)]).range([h2,0]);
+    g2.append('g').attr('transform',`translate(0,${h2})`).call(d3.axisBottom(xBins).tickFormat(d=>`£${d.toFixed(0)}`));
+    g2.append('g').call(d3.axisLeft(yBins).ticks(5));
+    g2.selectAll('.bin').data(bins).join('rect').attr('class','bin')
+      .attr('x',d=>xBins(d.x0)+1).attr('y',d=>yBins(d.length))
+      .attr('width',d=>Math.max(0,xBins(d.x1)-xBins(d.x0)-2))
+      .attr('height',d=>h2-yBins(d.length))
+      .attr('fill','#7c6fff').attr('rx',3);
+
+    // Category table
+    const tbody = document.getElementById('cat-table-body');
+    tbody.innerHTML = products.map(p=>`
+      <tr>
+        <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.productName||'—'}</td>
+        <td>£${(p.price||0).toFixed(2)}</td>
+        <td>${stars(p.rating)} ${p.rating||0}</td>
+        <td style="color:${p.inStock?'var(--low)':'var(--critical)'}">${p.inStock?'✅ Yes':'❌ No'}</td>
+        <td><span class="badge badge-${p.riskLevel||'LOW'}">${p.riskLevel||'—'} (${(p.riskScore||0).toFixed(0)})</span></td>
+        <td style="font-size:11px;color:var(--muted);max-width:200px">${(p.riskFlags||'').split(';').slice(0,2).join(' | ')}</td>
+      </tr>
+    `).join('');
+
+  } catch(e) { console.warn('Category chart error:', e); }
+}
+
+// ─── INIT ─────────────────────────────────────────────────────────
+
+// Try to load existing data on startup
+window.addEventListener('load', () => {
+  loadDashboard().catch(()=>{
+    document.getElementById('s-status').textContent = 'Server not reachable — start Spring Boot first, then click Scrape';
+  });
+});
+</script>
+</body>
+</html>
